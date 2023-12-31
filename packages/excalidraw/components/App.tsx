@@ -67,7 +67,6 @@ import {
   GRID_SIZE,
   IMAGE_MIME_TYPES,
   IMAGE_RENDER_TIMEOUT,
-  isAndroid,
   isBrave,
   LINE_CONFIRM_THRESHOLD,
   MAX_ALLOWED_FILE_BYTES,
@@ -90,6 +89,7 @@ import {
   POINTER_EVENTS,
   TOOL_TYPE,
   EDITOR_LS_KEYS,
+  isIOS,
 } from "../constants";
 import { ExportedElements, exportCanvas, loadFromBlob } from "../data";
 import Library, { distributeLibraryItemsOnSquareGrid } from "../data/library";
@@ -269,6 +269,7 @@ import {
   isTestEnv,
   easeOut,
   updateStable,
+  addEventListener,
 } from "../utils";
 import {
   createSrcDoc,
@@ -558,6 +559,8 @@ class App extends React.Component<AppProps, AppState> {
   onScrollChangeEmitter = new Emitter<
     [scrollX: number, scrollY: number, zoom: AppState["zoom"]]
   >();
+
+  onRemoveEventListenersEmitter = new Emitter<[]>();
 
   constructor(props: AppProps) {
     super(props);
@@ -2390,63 +2393,6 @@ class App extends React.Component<AppProps, AppState> {
     this.setState({});
   });
 
-  private removeEventListeners() {
-    document.removeEventListener(EVENT.POINTER_UP, this.removePointer);
-    document.removeEventListener(EVENT.COPY, this.onCopy);
-    document.removeEventListener(EVENT.PASTE, this.pasteFromClipboard);
-    document.removeEventListener(EVENT.CUT, this.onCut);
-    this.excalidrawContainerRef.current?.removeEventListener(
-      EVENT.WHEEL,
-      this.onWheel,
-    );
-    this.nearestScrollableContainer?.removeEventListener(
-      EVENT.SCROLL,
-      this.onScroll,
-    );
-    document.removeEventListener(EVENT.KEYDOWN, this.onKeyDown, false);
-    document.removeEventListener(
-      EVENT.MOUSE_MOVE,
-      this.updateCurrentCursorPosition,
-      false,
-    );
-    document.removeEventListener(EVENT.KEYUP, this.onKeyUp);
-    window.removeEventListener(EVENT.RESIZE, this.onResize, false);
-    window.removeEventListener(EVENT.UNLOAD, this.onUnload, false);
-    window.removeEventListener(EVENT.BLUR, this.onBlur, false);
-    this.excalidrawContainerRef.current?.removeEventListener(
-      EVENT.DRAG_OVER,
-      this.disableEvent,
-      false,
-    );
-    this.excalidrawContainerRef.current?.removeEventListener(
-      EVENT.DROP,
-      this.disableEvent,
-      false,
-    );
-
-    document.removeEventListener(
-      EVENT.GESTURE_START,
-      this.onGestureStart as any,
-      false,
-    );
-    document.removeEventListener(
-      EVENT.GESTURE_CHANGE,
-      this.onGestureChange as any,
-      false,
-    );
-    document.removeEventListener(
-      EVENT.GESTURE_END,
-      this.onGestureEnd as any,
-      false,
-    );
-    document.removeEventListener(
-      EVENT.FULLSCREENCHANGE,
-      this.onFullscreenChange,
-    );
-
-    window.removeEventListener(EVENT.MESSAGE, this.onWindowMessage, false);
-  }
-
   /** generally invoked only if fullscreen was invoked programmatically */
   private onFullscreenChange = () => {
     if (
@@ -2460,76 +2406,108 @@ class App extends React.Component<AppProps, AppState> {
     }
   };
 
+  private removeEventListeners() {
+    this.onRemoveEventListenersEmitter.trigger();
+  }
+
   private addEventListeners() {
+    // remove first as we can add event listeners multiple times
     this.removeEventListeners();
-    window.addEventListener(EVENT.MESSAGE, this.onWindowMessage, false);
-    document.addEventListener(EVENT.POINTER_UP, this.removePointer); // #3553
-    document.addEventListener(EVENT.COPY, this.onCopy);
-    this.excalidrawContainerRef.current?.addEventListener(
-      EVENT.WHEEL,
-      this.onWheel,
-      { passive: false },
-    );
+
+    // -------------------------------------------------------------------------
+    //                        view+edit mode listeners
+    // -------------------------------------------------------------------------
 
     if (this.props.handleKeyboardGlobally) {
-      document.addEventListener(EVENT.KEYDOWN, this.onKeyDown, false);
+      this.onRemoveEventListenersEmitter.once(
+        addEventListener(document, EVENT.KEYDOWN, this.onKeyDown, false),
+      );
     }
-    document.addEventListener(EVENT.KEYUP, this.onKeyUp, { passive: true });
-    document.addEventListener(
-      EVENT.MOUSE_MOVE,
-      this.updateCurrentCursorPosition,
-    );
-    // rerender text elements on font load to fix #637 && #1553
-    document.fonts?.addEventListener?.("loadingdone", (event) => {
-      const loadedFontFaces = (event as FontFaceSetLoadEvent).fontfaces;
-      this.fonts.onFontsLoaded(loadedFontFaces);
-    });
 
-    // Safari-only desktop pinch zoom
-    document.addEventListener(
-      EVENT.GESTURE_START,
-      this.onGestureStart as any,
-      false,
+    this.onRemoveEventListenersEmitter.once(
+      addEventListener(
+        this.excalidrawContainerRef.current,
+        EVENT.WHEEL,
+        this.onWheel,
+        { passive: false },
+      ),
+      addEventListener(window, EVENT.MESSAGE, this.onWindowMessage, false),
+      addEventListener(document, EVENT.POINTER_UP, this.removePointer), // #3553
+      addEventListener(document, EVENT.COPY, this.onCopy),
+      addEventListener(document, EVENT.KEYUP, this.onKeyUp, { passive: true }),
+      addEventListener(
+        document,
+        EVENT.MOUSE_MOVE,
+        this.updateCurrentCursorPosition,
+      ),
+      // rerender text elements on font load to fix #637 && #1553
+      addEventListener(document.fonts, "loadingdone", (event) => {
+        const loadedFontFaces = (event as FontFaceSetLoadEvent).fontfaces;
+        this.fonts.onFontsLoaded(loadedFontFaces);
+      }),
+      // Safari-only desktop pinch zoom
+      addEventListener(
+        document,
+        EVENT.GESTURE_START,
+        this.onGestureStart as any,
+        false,
+      ),
+      addEventListener(
+        document,
+        EVENT.GESTURE_CHANGE,
+        this.onGestureChange as any,
+        false,
+      ),
+      addEventListener(
+        document,
+        EVENT.GESTURE_END,
+        this.onGestureEnd as any,
+        false,
+      ),
     );
-    document.addEventListener(
-      EVENT.GESTURE_CHANGE,
-      this.onGestureChange as any,
-      false,
-    );
-    document.addEventListener(
-      EVENT.GESTURE_END,
-      this.onGestureEnd as any,
-      false,
-    );
+
     if (this.state.viewModeEnabled) {
       return;
     }
 
-    document.addEventListener(EVENT.FULLSCREENCHANGE, this.onFullscreenChange);
-    document.addEventListener(EVENT.PASTE, this.pasteFromClipboard);
-    document.addEventListener(EVENT.CUT, this.onCut);
+    // -------------------------------------------------------------------------
+    //                        edit-mode listeners only
+    // -------------------------------------------------------------------------
+
+    this.onRemoveEventListenersEmitter.once(
+      addEventListener(
+        document,
+        EVENT.FULLSCREENCHANGE,
+        this.onFullscreenChange,
+      ),
+      addEventListener(document, EVENT.PASTE, this.pasteFromClipboard),
+      addEventListener(document, EVENT.CUT, this.onCut),
+      addEventListener(window, EVENT.RESIZE, this.onResize, false),
+      addEventListener(window, EVENT.UNLOAD, this.onUnload, false),
+      addEventListener(window, EVENT.BLUR, this.onBlur, false),
+      addEventListener(
+        this.excalidrawContainerRef.current,
+        EVENT.DRAG_OVER,
+        this.disableEvent,
+        false,
+      ),
+      addEventListener(
+        this.excalidrawContainerRef.current,
+        EVENT.DROP,
+        this.disableEvent,
+        false,
+      ),
+    );
+
     if (this.props.detectScroll) {
-      this.nearestScrollableContainer = getNearestScrollableContainer(
-        this.excalidrawContainerRef.current!,
-      );
-      this.nearestScrollableContainer.addEventListener(
-        EVENT.SCROLL,
-        this.onScroll,
+      this.onRemoveEventListenersEmitter.once(
+        addEventListener(
+          getNearestScrollableContainer(this.excalidrawContainerRef.current!),
+          EVENT.SCROLL,
+          this.onScroll,
+        ),
       );
     }
-    window.addEventListener(EVENT.RESIZE, this.onResize, false);
-    window.addEventListener(EVENT.UNLOAD, this.onUnload, false);
-    window.addEventListener(EVENT.BLUR, this.onBlur, false);
-    this.excalidrawContainerRef.current?.addEventListener(
-      EVENT.DRAG_OVER,
-      this.disableEvent,
-      false,
-    );
-    this.excalidrawContainerRef.current?.addEventListener(
-      EVENT.DROP,
-      this.disableEvent,
-      false,
-    );
   }
 
   componentDidUpdate(prevProps: AppProps, prevState: AppState) {
@@ -2778,9 +2756,8 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   private onTouchStart = (event: TouchEvent) => {
-    // fix for Apple Pencil Scribble
-    // On Android, preventing the event would disable contextMenu on tap-hold
-    if (!isAndroid) {
+    // fix for Apple Pencil Scribble (do not prevent for other devices)
+    if (isIOS) {
       event.preventDefault();
     }
 
@@ -2804,9 +2781,6 @@ class App extends React.Component<AppProps, AppState> {
       });
       didTapTwice = false;
       clearTimeout(tappedTwiceTimer);
-    }
-    if (isAndroid) {
-      event.preventDefault();
     }
 
     if (event.touches.length === 2) {

@@ -43,7 +43,6 @@ import type { RenderableElementsMap } from "./types";
 import { syncInvalidIndices } from "../fractionalIndex";
 import { renderStaticScene } from "../renderer/staticScene";
 import { Fonts } from "../fonts";
-import { LOCAL_FONT_PROTOCOL } from "../fonts/metadata";
 
 const SVG_EXPORT_TAG = `<!-- svg-source:excalidraw -->`;
 
@@ -188,7 +187,13 @@ export const exportToCanvas = async (
     canvas.height = height * appState.exportScale;
     return { canvas, scale: appState.exportScale };
   },
+  loadFonts: () => Promise<void> = async () => {
+    await Fonts.loadFontsForElements(elements);
+  },
 ) => {
+  // load font faces before continuing, by default leverages browsers' [FontFace API](https://developer.mozilla.org/en-US/docs/Web/API/FontFace)
+  await loadFonts();
+
   const frameRendering = getFrameRenderingConfig(
     exportingFrame ?? null,
     appState.frameRendering ?? null,
@@ -375,35 +380,28 @@ export const exportToSvg = async (
     ? []
     : await Promise.all(
         Array.from(fontFamilies).map(async (x) => {
-          const { fontFaces } = Fonts.registered.get(x) ?? {};
+          const { fonts, metadata } = Fonts.registered.get(x) ?? {};
 
-          if (!Array.isArray(fontFaces)) {
+          if (!Array.isArray(fonts)) {
             console.error(
-              `Couldn't find registered font-faces for font-family "${x}"`,
+              `Couldn't find registered fonts for font-family "${x}"`,
               Fonts.registered,
             );
             return;
           }
 
-          return Promise.all(
-            fontFaces
-              .filter((font) => font.url.protocol !== LOCAL_FONT_PROTOCOL)
-              .map(async (font) => {
-                try {
-                  const content = await font.getContent();
+          if (metadata?.local) {
+            // don't inline local fonts
+            return;
+          }
 
-                  return `@font-face {
+          return Promise.all(
+            fonts.map(
+              async (font) => `@font-face {
         font-family: ${font.fontFace.family};
-        src: url(${content});
-          }`;
-                } catch (e) {
-                  console.error(
-                    `Skipped inlining font with URL "${font.url.toString()}"`,
-                    e,
-                  );
-                  return "";
-                }
-              }),
+        src: url(${await font.getContent()});
+          }`,
+            ),
           );
         }),
       );
